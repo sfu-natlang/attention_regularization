@@ -1,0 +1,6 @@
+envs
+datasets
+logs
+opennmt_preprocessed_data
+scripts
+tensorboard

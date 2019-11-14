@@ -186,9 +186,9 @@ def model_opts(parser):
               help="For FP16 training, the opt_level to use."
                    "See https://nvidia.github.io/apex/amp.html#opt-levels.")
 
-     group.add('--attn_reg', '-attn_reg', action="store_true", help="regularize attention with counterfactual attention")
-     group.add('--attn_reg_methods', '-attn_reg_methods', type=str, default="", help="Attention regularization methods")
-     group.add('--lambda_reg', '-lambda_reg', type=float, default=0.0, help='Lambda for attention regularization term')
+    group.add('--attn_reg', '-attn_reg', action="store_true", help="regularize attention with counterfactual attention")
+    group.add('--attn_reg_methods', '-attn_reg_methods', type=str, default="", help="Attention regularization methods")
+    group.add('--lambda_reg', '-lambda_reg', type=float, default=0.0, help='Lambda for attention regularization term')
 
 
 

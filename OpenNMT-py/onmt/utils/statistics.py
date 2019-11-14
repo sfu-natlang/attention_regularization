@@ -22,7 +22,7 @@ class Statistics(object):
         self.n_words = n_words
         self.n_correct = n_correct
         self.n_src_words = 0
-        self.start_time = time.time(),
+        self.start_time = time.time()
         self.attn_entropy_sum = attn_entropy_sum
 
     @staticmethod

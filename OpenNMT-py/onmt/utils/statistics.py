@@ -17,12 +17,13 @@ class Statistics(object):
     * elapsed time
     """
 
-    def __init__(self, loss=0, n_words=0, n_correct=0):
+    def __init__(self, loss=0, n_words=0, n_correct=0, attn_entropy_sum=0):
         self.loss = loss
         self.n_words = n_words
         self.n_correct = n_correct
         self.n_src_words = 0
-        self.start_time = time.time()
+        self.start_time = time.time(),
+        self.attn_entropy_sum = attn_entropy_sum
 
     @staticmethod
     def all_gather_stats(stat, max_size=4096):
@@ -81,6 +82,7 @@ class Statistics(object):
         self.loss += stat.loss
         self.n_words += stat.n_words
         self.n_correct += stat.n_correct
+        self.attn_entropy_sum += stat.attn_entropy_sum
 
         if update_n_src_words:
             self.n_src_words += stat.n_src_words
@@ -101,6 +103,9 @@ class Statistics(object):
         """ compute elapsed time """
         return time.time() - self.start_time
 
+    def attn_entropy(self):
+        return self.attn_entropy_sum / float(self.n_words)
+
     def output(self, step, num_steps, learning_rate, start):
         """Write out statistics to stdout.
 
@@ -115,7 +120,7 @@ class Statistics(object):
             step_fmt = "%s/%5d" % (step_fmt, num_steps)
         logger.info(
             ("Step %s; acc: %6.2f; ppl: %5.2f; xent: %4.2f; " +
-             "lr: %7.5f; %3.0f/%3.0f tok/s; %6.0f sec")
+             "lr: %7.5f; %3.0f/%3.0f tok/s; %6.0f sec; avg_attn_entropy: %f")
             % (step_fmt,
                self.accuracy(),
                self.ppl(),
@@ -123,7 +128,8 @@ class Statistics(object):
                learning_rate,
                self.n_src_words / (t + 1e-5),
                self.n_words / (t + 1e-5),
-               time.time() - start))
+               time.time() - start,
+               self.attn_entropy()))
         sys.stdout.flush()
 
     def log_tensorboard(self, prefix, writer, learning_rate, step):
@@ -134,3 +140,4 @@ class Statistics(object):
         writer.add_scalar(prefix + "/accuracy", self.accuracy(), step)
         writer.add_scalar(prefix + "/tgtper", self.n_words / t, step)
         writer.add_scalar(prefix + "/lr", learning_rate, step)
+        writer.add_scalar(prefix + "/avg_attn_entropy", self.attn_entropy(), step)

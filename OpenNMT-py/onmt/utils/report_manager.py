@@ -139,6 +139,7 @@ class ReportMgr(ReportMgrBase):
         if train_stats is not None:
             self.log('Train perplexity: %g' % train_stats.ppl())
             self.log('Train accuracy: %g' % train_stats.accuracy())
+            self.log('Train avg attention entropy: %g' % train_stats.attn_entropy())
 
             self.maybe_log_tensorboard(train_stats,
                                        "train",
@@ -148,6 +149,7 @@ class ReportMgr(ReportMgrBase):
         if valid_stats is not None:
             self.log('Validation perplexity: %g' % valid_stats.ppl())
             self.log('Validation accuracy: %g' % valid_stats.accuracy())
+            self.log('Validation avg attention entropy: %g' % valid_stats.attn_entropy())
 
             self.maybe_log_tensorboard(valid_stats,
                                        "valid",

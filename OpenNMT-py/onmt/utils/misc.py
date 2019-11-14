@@ -124,3 +124,7 @@ def relative_matmul(x, z, transpose):
 def fn_args(fun):
     """Returns the list of function arguments name."""
     return inspect.getfullargspec(fun).args
+
+
+def entropy(p, dim = -1, keepdim = None):
+    return -torch.where(p > 0, p * p.log(), p.new([0.0])).sum(dim = dim, keepdim = keepdim)

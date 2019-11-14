@@ -6,10 +6,12 @@ from __future__ import division
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import random
 
 import onmt
 from onmt.modules.sparse_losses import SparsemaxLoss
 from onmt.modules.sparse_activations import LogSparsemax
+from onmt.utils.misc import entropy
 
 
 def build_loss_compute(model, tgt_field, opt, train=True):
@@ -57,7 +59,7 @@ def build_loss_compute(model, tgt_field, opt, train=True):
         )
     else:
         compute = NMTLossCompute(
-            criterion, loss_gen, lambda_coverage=opt.lambda_coverage)
+            criterion, loss_gen, lambda_coverage=opt.lambda_coverage, lambda_reg=opt.lambda_reg, attn_reg=opt.attn_reg)
     compute.to(device)
 
     return compute
@@ -167,7 +169,7 @@ class LossComputeBase(nn.Module):
             batch_stats.update(stats)
         return None, batch_stats
 
-    def _stats(self, loss, scores, target):
+    def _stats(self, loss, scores, target, attn_entropy_sum):
         """
         Args:
             loss (:obj:`FloatTensor`): the loss computed by the loss criterion.
@@ -181,7 +183,7 @@ class LossComputeBase(nn.Module):
         non_padding = target.ne(self.padding_idx)
         num_correct = pred.eq(target).masked_select(non_padding).sum().item()
         num_non_padding = non_padding.sum().item()
-        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct)
+        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, attn_entropy_sum)
 
     def _bottle(self, _v):
         return _v.view(-1, _v.size(2))
@@ -226,15 +228,23 @@ class NMTLossCompute(LossComputeBase):
     """
 
     def __init__(self, criterion, generator, normalization="sents",
-                 lambda_coverage=0.0):
+                 lambda_coverage=0.0, lambda_reg=0.0, attn_reg=False):
         super(NMTLossCompute, self).__init__(criterion, generator)
         self.lambda_coverage = lambda_coverage
+        self.lambda_reg = lambda_reg
+        self.attn_reg = attn_reg
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         shard_state = {
             "output": output,
             "target": batch.tgt[range_[0] + 1: range_[1], :, 0],
+            "std_attn": attns.get("std", None).detach(),
         }
+
+        if 'hack' in attns:
+            for k in attns['hack'].keys():
+                shard_state['%s_outputs' % k] = attns['hack'][k]['dec_outs']
+                
         if self.lambda_coverage != 0.0:
             coverage = attns.get("coverage", None)
             std = attns.get("std", None)
@@ -251,7 +261,7 @@ class NMTLossCompute(LossComputeBase):
         return shard_state
 
     def _compute_loss(self, batch, output, target, std_attn=None,
-                      coverage_attn=None):
+                      coverage_attn=None, second_max_outputs=None):
 
         bottled_output = self._bottle(output)
 
@@ -259,12 +269,49 @@ class NMTLossCompute(LossComputeBase):
         gtruth = target.view(-1)
 
         loss = self.criterion(scores, gtruth)
+
+        # scores dimension: target size * batch size * target vocab size
+        
+        # Bug? handled padding in source side? for entropy calculation
+
+        if self.attn_reg is not False:
+            scores_unbottled = scores.view(output.shape[0], output.shape[1], -1)
+            _, classes_for_reg = scores_unbottled.max(dim=2)
+            classes_for_reg_bottled = classes_for_reg.view(-1)
+
+            extra_bottled_output = self._bottle(second_max_outputs)
+            extra_scores = self.generator(extra_bottled_output)
+
+            criterion = nn.NLLLoss(reduction='none')
+
+            additional_loss = criterion(extra_scores, classes_for_reg_bottled)
+
+            additional_loss_unbottled = additional_loss.view(target.shape)
+
+            target_mask = target.ne(self.padding_idx).float()
+
+            additional_loss = (target_mask * additional_loss_unbottled).sum()
+
+            if random.randint(1, 50) == 5:
+                print("normal loss:  %f" % loss)
+                print("additional loss:  %f" % additional_loss)
+                print("new loss:  %f" % (loss - self.lambda_reg * additional_loss))
+            
+            loss -= self.lambda_reg * additional_loss # Todo: multiple regularization methods
+
         if self.lambda_coverage != 0.0:
             coverage_loss = self._compute_coverage_loss(
                 std_attn=std_attn, coverage_attn=coverage_attn)
             loss += coverage_loss
-        stats = self._stats(loss.clone(), scores, gtruth)
+            
+        entropy_matrix = entropy(std_attn, dim=2, keepdim=False)
+        mask = target.ne(self.padding_idx).float()
+        masked_entropy_matrix = mask * entropy_matrix
+        
+        attn_entropy_sum = masked_entropy_matrix.sum()
 
+        stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum)
+        
         return loss, stats
 
     def _compute_coverage_loss(self, std_attn, coverage_attn):

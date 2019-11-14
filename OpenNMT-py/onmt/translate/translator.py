@@ -15,7 +15,7 @@ import onmt.inputters as inputters
 import onmt.decoders.ensemble
 from onmt.translate.beam_search import BeamSearch
 from onmt.translate.random_sampling import RandomSampling
-from onmt.utils.misc import tile, set_random_seed
+from onmt.utils.misc import tile, set_random_seed, entropy
 from onmt.modules.copy_generator import collapse_copy_scores
 
 
@@ -201,6 +201,15 @@ class Translator(object):
                 "log_probs": []}
 
         set_random_seed(seed, self._use_cuda)
+
+        self.total_generated_tokens = 0
+        self.entropy_sum = 0
+
+        self.m2_total_generated_tokens = 0
+        self.m2_entropy_sum = 0
+
+        self.m4_total_generated_tokens = 0
+
 
     @classmethod
     def from_opt(
@@ -405,6 +414,7 @@ class Translator(object):
                                      pred_words_total)
             self._log(msg)
             if tgt is not None:
+                print(">>>> told words total:  %d <<<<<" % gold_words_total)
                 msg = self._report_score('GOLD', gold_score_total,
                                          gold_words_total)
                 self._log(msg)
@@ -427,6 +437,19 @@ class Translator(object):
             import json
             json.dump(self.translator.beam_accum,
                       codecs.open(self.dump_beam, 'w', 'utf-8'))
+
+        print("[Stats based on GENERATED translation]")
+        print(">>> total tokens:  %d" % self.total_generated_tokens)
+        print(">>> sum entropy:  %f" % self.entropy_sum)
+        print(">>>> average entropy:  %f" % (self.entropy_sum / self.total_generated_tokens))
+        
+        print("--------------------------------")
+
+        print("[Stats based on FORCED decoding]")
+        print(">>> total tokens:  %d" % self.m2_total_generated_tokens)
+        print(">>> sum entropy:  %f" % self.m2_entropy_sum)
+        print(">>>> average entropy:  %f" % (self.m2_entropy_sum / self.m2_total_generated_tokens))
+
         return all_scores, all_predictions
 
     def _translate_random_sampling(
@@ -490,6 +513,12 @@ class Translator(object):
                 step=step,
                 batch_offset=random_sampler.select_indices
             )
+
+            # attn shape: 1 x batch x src len
+            attn_entropy_sum = entropy(attn, dim=2, keepdim=False).view(-1).sum().item()
+
+            self.entropy_sum += attn_entropy_sum
+            self.total_generated_tokens += attn.shape[1]
 
             random_sampler.advance(log_probs, attn)
             any_batch_is_finished = random_sampler.is_finished.any()
@@ -826,6 +855,12 @@ class Translator(object):
         log_probs, attn = self._decode_and_generate(
             tgt_in, memory_bank, batch, src_vocabs,
             memory_lengths=src_lengths, src_map=src_map)
+
+        mask = tgt[1:,:,:].ne(self._tgt_pad_idx)
+        mask = mask.view(mask.shape[0], mask.shape[1]).float()
+        
+        self.m2_total_generated_tokens += tgt[1:,:,:].ne(self._tgt_pad_idx).sum().item()
+        self.m2_entropy_sum += (entropy(attn, dim=2, keepdim=False) * mask).sum().item()
 
         log_probs[:, :, self._tgt_pad_idx] = 0
         gold = tgt[1:]

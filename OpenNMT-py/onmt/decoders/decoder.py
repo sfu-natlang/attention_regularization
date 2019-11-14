@@ -84,7 +84,8 @@ class RNNDecoderBase(DecoderBase):
                  hidden_size, attn_type="general", attn_func="softmax",
                  coverage_attn=False, context_gate=None,
                  copy_attn=False, dropout=0.0, embeddings=None,
-                 reuse_copy_attn=False, copy_attn_type="general"):
+                 reuse_copy_attn=False, copy_attn_type="general",
+                 attn_reg=False, attn_reg_methods=None):
         super(RNNDecoderBase, self).__init__(
             attentional=attn_type != "none" and attn_type is not None)
 
@@ -138,6 +139,9 @@ class RNNDecoderBase(DecoderBase):
         if self._reuse_copy_attn and not self.attentional:
             raise ValueError("Cannot reuse copy attention with no attention.")
 
+        self.attn_reg = attn_reg
+        self.attn_reg_methods = attn_reg_methods.strip().split(',')
+
     @classmethod
     def from_opt(cls, opt, embeddings):
         """Alternate constructor."""
@@ -155,7 +159,9 @@ class RNNDecoderBase(DecoderBase):
             else opt.dropout,
             embeddings,
             opt.reuse_copy_attn,
-            opt.copy_attn_type)
+            opt.copy_attn_type,
+            opt.attn_reg,
+            opt.attn_reg_methods)
 
     def init_state(self, src, memory_bank, encoder_final):
         """Initialize decoder state with last state of the encoder."""
@@ -305,6 +311,20 @@ class StdRNNDecoder(RNNDecoderBase):
                 memory_lengths=memory_lengths
             )
             attns["std"] = p_attn
+
+            if self.attn_reg is True:
+                attns['hack'] = {}
+                
+                for attn_reg_method in self.attn_reg_methods:
+                    new_dec_outs, new_p_attn = self.attn(
+                        rnn_output.transpose(0, 1).contiguous(),
+                        memory_bank.transpose(0, 1),
+                        memory_lengths=memory_lengths,
+                        modification_method=attn_reg_method       
+                    )
+
+                    attns['hack'][attn_reg_method] = {'dec_outs': self.dropout(new_dec_outs)}
+
 
         # Calculate the context gate.
         if self.context_gate is not None:

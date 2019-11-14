@@ -135,7 +135,7 @@ class GlobalAttention(nn.Module):
 
             return self.v(wquh.view(-1, dim)).view(tgt_batch, tgt_len, src_len)
 
-    def forward(self, source, memory_bank, memory_lengths=None, coverage=None):
+    def forward(self, source, memory_bank, memory_lengths=None, coverage=None, modification_method=None):
         """
 
         Args:
@@ -175,7 +175,43 @@ class GlobalAttention(nn.Module):
             memory_bank = torch.tanh(memory_bank)
 
         # compute attention scores, as in Luong et al.
+        # dimension: batch x target len x source len
         align = self.score(source, memory_bank)
+
+        if modification_method is not None:
+            top_indices = torch.argsort(align, descending=True)
+            memory_lengths_vector = memory_lengths.cpu()
+
+            for i in range(align.shape[0]):
+                true_length = memory_lengths_vector[i]#true_length_vector[i] #memory_lengths[i]
+
+                for j in range(align.shape[1]):
+                    if modification_method == 'second_max':
+
+                        #top_indices = torch.argsort(align[i][j][:true_length], descending=True)
+
+                        if true_length <= 2:
+                            continue
+
+
+                        first_max = None
+                        second_max = None
+                        third_max = None
+
+                        for el in top_indices[i][j].cpu():
+                            if el >= true_length:#.cuda(el.get_device()):
+                                continue
+
+                            if first_max is None:
+                                first_max = el
+                            elif second_max is None:
+                                second_max = el
+                            elif third_max is None:
+                                third_max = el
+                            else:
+                                break
+
+                        align[i][j][first_max] = align[i][j][third_max]
 
         if memory_lengths is not None:
             mask = sequence_mask(memory_lengths, max_len=align.size(-1))

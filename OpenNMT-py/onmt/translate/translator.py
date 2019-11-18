@@ -15,7 +15,7 @@ import onmt.inputters as inputters
 import onmt.decoders.ensemble
 from onmt.translate.beam_search import BeamSearch
 from onmt.translate.random_sampling import RandomSampling
-from onmt.utils.misc import tile, set_random_seed, entropy
+from onmt.utils.misc import tile, set_random_seed, entropy, normalized_entropy
 from onmt.modules.copy_generator import collapse_copy_scores
 
 
@@ -204,9 +204,11 @@ class Translator(object):
 
         self.total_generated_tokens = 0
         self.entropy_sum = 0
+        self.norm_entropy_sum = 0
 
         self.m2_total_generated_tokens = 0
         self.m2_entropy_sum = 0
+        self.m2_norm_entropy_sum = 0
 
         self.m4_total_generated_tokens = 0
 
@@ -442,6 +444,8 @@ class Translator(object):
         print(">>> total tokens:  %d" % self.total_generated_tokens)
         print(">>> sum entropy:  %f" % self.entropy_sum)
         print(">>>> average entropy:  %f" % (self.entropy_sum / self.total_generated_tokens))
+        print(">>>> sum norm entropy:  %f" % self.norm_entropy_sum)
+        print(">>>> average norm entropy:  %f" % (self.norm_entropy_sum / self.total_generated_tokens))
         
         print("--------------------------------")
 
@@ -449,6 +453,8 @@ class Translator(object):
         print(">>> total tokens:  %d" % self.m2_total_generated_tokens)
         print(">>> sum entropy:  %f" % self.m2_entropy_sum)
         print(">>>> average entropy:  %f" % (self.m2_entropy_sum / self.m2_total_generated_tokens))
+        print(">>> norm sum entropy:  %f" % self.m2_norm_entropy_sum)
+        print(">>>> norm average entropy:  %f" % (self.m2_norm_entropy_sum / self.m2_total_generated_tokens))
 
         return all_scores, all_predictions
 
@@ -516,8 +522,10 @@ class Translator(object):
 
             # attn shape: 1 x batch x src len
             attn_entropy_sum = entropy(attn, dim=2, keepdim=False).view(-1).sum().item()
+            norm_attn_entropy_sum = normalized_entropy(attn, memory_lengths.float(), dim=2, keepdim=False).view(-1).sum().item()
 
             self.entropy_sum += attn_entropy_sum
+            self.norm_entropy_sum += norm_attn_entropy_sum
             self.total_generated_tokens += attn.shape[1]
 
             random_sampler.advance(log_probs, attn)
@@ -860,7 +868,9 @@ class Translator(object):
         mask = mask.view(mask.shape[0], mask.shape[1]).float()
         
         self.m2_total_generated_tokens += tgt[1:,:,:].ne(self._tgt_pad_idx).sum().item()
+
         self.m2_entropy_sum += (entropy(attn, dim=2, keepdim=False) * mask).sum().item()
+        self.m2_norm_entropy_sum += (normalized_entropy(attn, src_lengths.float(), dim=2, keepdim=False) * mask).sum().item()
 
         log_probs[:, :, self._tgt_pad_idx] = 0
         gold = tgt[1:]

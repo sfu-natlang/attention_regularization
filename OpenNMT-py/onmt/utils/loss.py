@@ -11,7 +11,7 @@ import random
 import onmt
 from onmt.modules.sparse_losses import SparsemaxLoss
 from onmt.modules.sparse_activations import LogSparsemax
-from onmt.utils.misc import entropy
+from onmt.utils.misc import entropy, normalized_entropy
 
 
 def build_loss_compute(model, tgt_field, opt, train=True):
@@ -169,7 +169,7 @@ class LossComputeBase(nn.Module):
             batch_stats.update(stats)
         return None, batch_stats
 
-    def _stats(self, loss, scores, target, attn_entropy_sum):
+    def _stats(self, loss, scores, target, attn_entropy_sum, norm_attn_entropy_sum):
         """
         Args:
             loss (:obj:`FloatTensor`): the loss computed by the loss criterion.
@@ -183,7 +183,7 @@ class LossComputeBase(nn.Module):
         non_padding = target.ne(self.padding_idx)
         num_correct = pred.eq(target).masked_select(non_padding).sum().item()
         num_non_padding = non_padding.sum().item()
-        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, attn_entropy_sum)
+        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, attn_entropy_sum, norm_attn_entropy_sum)
 
     def _bottle(self, _v):
         return _v.view(-1, _v.size(2))
@@ -303,14 +303,25 @@ class NMTLossCompute(LossComputeBase):
             coverage_loss = self._compute_coverage_loss(
                 std_attn=std_attn, coverage_attn=coverage_attn)
             loss += coverage_loss
-            
-        entropy_matrix = entropy(std_attn, dim=2, keepdim=False)
-        mask = target.ne(self.padding_idx).float()
-        masked_entropy_matrix = mask * entropy_matrix
-        
-        attn_entropy_sum = masked_entropy_matrix.sum()
 
-        stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum)
+        _, mem_length = batch.src
+
+        entropy_matrix = entropy(std_attn, dim=2, keepdim=False)
+
+        # print("entropy matrix shape:  ")
+        # print(entropy_matrix.shape)
+
+        normalized_entropy_matrix = normalized_entropy(std_attn, mem_length.float(), dim=2, keepdim=False)
+
+        mask = target.ne(self.padding_idx).float()
+        
+        masked_entropy_matrix = mask * entropy_matrix
+        masked_normalized_entropy_matrix = mask * normalized_entropy_matrix
+
+        attn_entropy_sum = masked_entropy_matrix.sum()
+        normalized_attn_entropy_sum = masked_normalized_entropy_matrix.sum()
+
+        stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum, normalized_attn_entropy_sum)
         
         return loss, stats
 

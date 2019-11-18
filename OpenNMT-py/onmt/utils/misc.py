@@ -128,3 +128,10 @@ def fn_args(fun):
 
 def entropy(p, dim = -1, keepdim = None):
     return -torch.where(p > 0, p * p.log(), p.new([0.0])).sum(dim = dim, keepdim = keepdim)
+
+
+def normalized_entropy(p, memory_length, dim = -1, keepdim = None):
+    entropy_matrix = entropy(p, dim=dim, keepdim=keepdim)
+    for i in range(memory_length.shape[0]):
+        entropy_matrix[:,i] /= memory_length[i].log()        
+    return entropy_matrix

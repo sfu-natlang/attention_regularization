@@ -190,7 +190,14 @@ def model_opts(parser):
     group.add('--attn_reg_methods', '-attn_reg_methods', type=str, default="", help="Attention regularization methods")
     group.add('--lambda_reg', '-lambda_reg', type=float, default=0.0, help='Lambda for attention regularization term')
 
+    #group.add('--uniform_reg', '-uniform_reg', action="store_true", help="Penalize uniform counterfactual attention weights")
+    group.add('--uniform_reg_lambda', '-uniform_reg_lambda', type=float, default=0.0, help="Lambda for uniform counterfactual weights regularization")
 
+    #group.add('--permute_reg', '-permute_reg', action="store_true", help="Penalize random permute counterfactual attention weights")
+    group.add('--permute_reg_lambda', '-permute_reg_lambda', type=float, default=0.0, help="Lambda for random permute counterfactual weights regularization")
+
+    #group.add('--zero_out_max_reg', '-zero_out_max_reg', action="store_true", help="Penalize uniform counterfactual attention weights")
+    group.add('--zero_out_max_reg_lambda', '-zero_out_max_reg_lambda', type=float, default=0.0, help="Lambda for zero_out_max counterfactual weights regularization")
 
 def preprocess_opts(parser):
     """ Pre-procesing options """

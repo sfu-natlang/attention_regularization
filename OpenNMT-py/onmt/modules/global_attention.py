@@ -179,14 +179,28 @@ class GlobalAttention(nn.Module):
         align = self.score(source, memory_bank)
 
         if modification_method is not None:
+            #align = align.detach() # Is this OK?
+
             top_indices = torch.argsort(align, descending=True)
             memory_lengths_vector = memory_lengths.cpu()
 
             for i in range(align.shape[0]):
                 true_length = memory_lengths_vector[i]#true_length_vector[i] #memory_lengths[i]
 
+                if modification_method == 'uniform':
+                    align[i,:,:true_length] = 1
+                    continue
+
                 for j in range(align.shape[1]):
-                    if modification_method == 'second_max':
+                    if modification_method == 'zero_out_max':
+                        max_index = align[i][j][0:true_length].argmax()
+                        align[i][j][max_index] = -float('inf')
+                    elif modification_method == 'random_permute':
+                       	rand_indices = torch.randperm(true_length, requires_grad=False)
+                        #cloned = align[i,j,rand_indices].clone()
+                        align[i,j,0:true_length] = align[i,j,rand_indices]#.clone()
+                        #align[i,j,0:true_length] = cloned
+                    elif modification_method == 'second_max':
 
                         #top_indices = torch.argsort(align[i][j][:true_length], descending=True)
 
@@ -212,6 +226,8 @@ class GlobalAttention(nn.Module):
                                 break
 
                         align[i][j][first_max] = align[i][j][third_max]
+                    else:
+                        print(">>> shit (Nothing was selected for attetnion modification) <<< ")
 
         if memory_lengths is not None:
             mask = sequence_mask(memory_lengths, max_len=align.size(-1))

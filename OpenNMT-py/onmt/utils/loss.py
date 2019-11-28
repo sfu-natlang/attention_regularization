@@ -59,7 +59,11 @@ def build_loss_compute(model, tgt_field, opt, train=True):
         )
     else:
         compute = NMTLossCompute(
-            criterion, loss_gen, lambda_coverage=opt.lambda_coverage, lambda_reg=opt.lambda_reg, attn_reg=opt.attn_reg)
+            criterion, loss_gen, lambda_coverage=opt.lambda_coverage, lambda_reg=opt.lambda_reg, attn_reg=opt.attn_reg,
+            zero_out_max_reg_lambda=opt.zero_out_max_reg_lambda,
+            random_permute_reg_lambda=opt.permute_reg_lambda,
+            uniform_reg_lambda=opt.uniform_reg_lambda
+            )
     compute.to(device)
 
     return compute
@@ -228,11 +232,16 @@ class NMTLossCompute(LossComputeBase):
     """
 
     def __init__(self, criterion, generator, normalization="sents",
-                 lambda_coverage=0.0, lambda_reg=0.0, attn_reg=False):
+                 lambda_coverage=0.0, lambda_reg=0.0, attn_reg=False,
+                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0):
         super(NMTLossCompute, self).__init__(criterion, generator)
         self.lambda_coverage = lambda_coverage
         self.lambda_reg = lambda_reg
         self.attn_reg = attn_reg
+        
+        self.uniform_reg_lambda = uniform_reg_lambda
+        self.zero_out_max_reg_lambda = zero_out_max_reg_lambda
+        self.random_permute_reg_lambda = random_permute_reg_lambda
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         shard_state = {
@@ -261,7 +270,8 @@ class NMTLossCompute(LossComputeBase):
         return shard_state
 
     def _compute_loss(self, batch, output, target, std_attn=None,
-                      coverage_attn=None, second_max_outputs=None):
+                      coverage_attn=None, second_max_outputs=None,
+                      zero_out_max_outputs=None, uniform_outputs=None, random_permute_outputs=None):
 
         bottled_output = self._bottle(output)
 
@@ -274,31 +284,55 @@ class NMTLossCompute(LossComputeBase):
         
         # Bug? handled padding in source side? for entropy calculation
 
+        previous_loss = loss.clone()
+
         if self.attn_reg is not False:
             scores_unbottled = scores.view(output.shape[0], output.shape[1], -1)
             _, classes_for_reg = scores_unbottled.max(dim=2)
             classes_for_reg_bottled = classes_for_reg.view(-1)
 
-            extra_bottled_output = self._bottle(second_max_outputs)
-            extra_scores = self.generator(extra_bottled_output)
+            names = ['second_max', 'zero_out_max', 'uniform', 'random_permute']
+            outputs = [second_max_outputs, zero_out_max_outputs, uniform_outputs, random_permute_outputs]
+            lambdas = [self.lambda_reg, self.zero_out_max_reg_lambda, self.uniform_reg_lambda, self.random_permute_reg_lambda]
+        
+            for name, extra_output, reg_lambda in zip(names, outputs, lambdas):
+                if reg_lambda == 0:
+                    continue
 
-            criterion = nn.NLLLoss(reduction='none')
+                extra_bottled_output = self._bottle(extra_output)
+                extra_scores = self.generator(extra_bottled_output)
 
-            additional_loss = criterion(extra_scores, classes_for_reg_bottled)
+                criterion = nn.NLLLoss(reduction='none')
 
-            additional_loss_unbottled = additional_loss.view(target.shape)
+                additional_loss = criterion(extra_scores, classes_for_reg_bottled)
 
-            target_mask = target.ne(self.padding_idx).float()
+                additional_loss_unbottled = additional_loss.view(target.shape)
 
-            additional_loss = (target_mask * additional_loss_unbottled).sum()
+                target_mask = target.ne(self.padding_idx).float()
 
-            if random.randint(1, 50) == 5:
-                print("normal loss:  %f" % loss)
-                print("additional loss:  %f" % additional_loss)
-                print("new loss:  %f" % (loss - self.lambda_reg * additional_loss))
+                additional_loss = (target_mask * additional_loss_unbottled).sum()
+
+                # if random.randint(1, 50) == 5:
+                #     print("normal loss:  %f" % loss)
+                #     print("additional loss:  %f" % additional_loss)
+                #     print("new loss:  %f" % (loss - self.lambda_reg * additional_loss))
+                
+                #loss -= self.lambda_reg * additional_loss # Todo: multiple regularization methods
+		
+                #print("additional loss:  ", additional_loss)
             
-            loss -= self.lambda_reg * additional_loss # Todo: multiple regularization methods
+                # print("============")
+                # print("loss for %s is :  %f" % (name, additional_loss))
+                # print("Total loss will be updated by %f" % (-reg_lambda * additional_loss))
+                # print("=============")
+                
+                loss -= reg_lambda * additional_loss
 
+            #print("done")
+            if(random.randint(1,100) == 50):
+                print("previous loss:  ", previous_loss.item())
+                print("new loss:  ", loss.item())
+	
         if self.lambda_coverage != 0.0:
             coverage_loss = self._compute_coverage_loss(
                 std_attn=std_attn, coverage_attn=coverage_attn)

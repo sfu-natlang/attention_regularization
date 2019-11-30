@@ -135,3 +135,8 @@ def normalized_entropy(p, memory_length, dim = -1, keepdim = None):
     for i in range(memory_length.shape[0]):
         entropy_matrix[:,i] /= memory_length[i].log()        
     return entropy_matrix
+
+def entropy_new(p, dim = -1, keepdim=None):
+    smoothed = p + 0.00001
+    return (smoothed * smoothed.log()).sum(dim=dim, keepdim=keepdim) * -1
+#def entropy_refind()

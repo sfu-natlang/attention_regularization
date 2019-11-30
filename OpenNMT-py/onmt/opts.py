@@ -199,6 +199,9 @@ def model_opts(parser):
     #group.add('--zero_out_max_reg', '-zero_out_max_reg', action="store_true", help="Penalize uniform counterfactual attention weights")
     group.add('--zero_out_max_reg_lambda', '-zero_out_max_reg_lambda', type=float, default=0.0, help="Lambda for zero_out_max counterfactual weights regularization")
 
+    group.add('--ent_reg', '-ent_reg', action="store_true", default=False, help="Regularize entropy")
+    group.add('--ent_reg_lambda', '-ent_reg_lambda', type=float, default=0.0, help="Lambda for ent reg loss")
+
 def preprocess_opts(parser):
     """ Pre-procesing options """
     # Data options

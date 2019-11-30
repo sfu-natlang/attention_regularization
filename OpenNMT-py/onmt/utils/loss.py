@@ -11,7 +11,8 @@ import random
 import onmt
 from onmt.modules.sparse_losses import SparsemaxLoss
 from onmt.modules.sparse_activations import LogSparsemax
-from onmt.utils.misc import entropy, normalized_entropy
+from onmt.utils.misc import entropy, normalized_entropy, entropy_new
+from onmt.utils.debug import register_hooks
 
 
 def build_loss_compute(model, tgt_field, opt, train=True):
@@ -62,7 +63,9 @@ def build_loss_compute(model, tgt_field, opt, train=True):
             criterion, loss_gen, lambda_coverage=opt.lambda_coverage, lambda_reg=opt.lambda_reg, attn_reg=opt.attn_reg,
             zero_out_max_reg_lambda=opt.zero_out_max_reg_lambda,
             random_permute_reg_lambda=opt.permute_reg_lambda,
-            uniform_reg_lambda=opt.uniform_reg_lambda
+            uniform_reg_lambda=opt.uniform_reg_lambda,
+            ent_reg=opt.ent_reg,
+            ent_reg_lambda=opt.ent_reg_lambda
             )
     compute.to(device)
 
@@ -169,7 +172,14 @@ class LossComputeBase(nn.Module):
         batch_stats = onmt.utils.Statistics()
         for shard in shards(shard_state, shard_size):
             loss, stats = self._compute_loss(batch, **shard)
+            
+            #get_dot = register_hooks(loss)
+
             loss.div(float(normalization)).backward()
+
+            #dot = get_dot()
+            #dot.save('/local-scratch/pooya/tmp.dot')
+            #print("loss grad:  ", loss.grad)
             batch_stats.update(stats)
         return None, batch_stats
 
@@ -233,7 +243,7 @@ class NMTLossCompute(LossComputeBase):
 
     def __init__(self, criterion, generator, normalization="sents",
                  lambda_coverage=0.0, lambda_reg=0.0, attn_reg=False,
-                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0):
+                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0, ent_reg=False, ent_reg_lambda=0):
         super(NMTLossCompute, self).__init__(criterion, generator)
         self.lambda_coverage = lambda_coverage
         self.lambda_reg = lambda_reg
@@ -243,11 +253,15 @@ class NMTLossCompute(LossComputeBase):
         self.zero_out_max_reg_lambda = zero_out_max_reg_lambda
         self.random_permute_reg_lambda = random_permute_reg_lambda
 
+        self.ent_reg = ent_reg
+        self.ent_reg_lambda = ent_reg_lambda
+
     def _make_shard_state(self, batch, output, range_, attns=None):
         shard_state = {
             "output": output,
             "target": batch.tgt[range_[0] + 1: range_[1], :, 0],
             "std_attn": attns.get("std", None).detach(),
+            "std_attn_attached": attns.get("std", None)
         }
 
         if 'hack' in attns:
@@ -271,7 +285,7 @@ class NMTLossCompute(LossComputeBase):
 
     def _compute_loss(self, batch, output, target, std_attn=None,
                       coverage_attn=None, second_max_outputs=None,
-                      zero_out_max_outputs=None, uniform_outputs=None, random_permute_outputs=None):
+                      zero_out_max_outputs=None, uniform_outputs=None, random_permute_outputs=None, std_attn_attached=None):
 
         bottled_output = self._bottle(output)
 
@@ -326,13 +340,14 @@ class NMTLossCompute(LossComputeBase):
                 # print("Total loss will be updated by %f" % (-reg_lambda * additional_loss))
                 # print("=============")
                 
+                print(">>>>>>>> shit <<<<<<<")
                 loss -= reg_lambda * additional_loss
 
             #print("done")
             if(random.randint(1,100) == 50):
                 print("previous loss:  ", previous_loss.item())
                 print("new loss:  ", loss.item())
-	
+
         if self.lambda_coverage != 0.0:
             coverage_loss = self._compute_coverage_loss(
                 std_attn=std_attn, coverage_attn=coverage_attn)
@@ -354,6 +369,53 @@ class NMTLossCompute(LossComputeBase):
 
         attn_entropy_sum = masked_entropy_matrix.sum()
         normalized_attn_entropy_sum = masked_normalized_entropy_matrix.sum()
+
+        #print(">>>> ent reg;  ", self.ent_reg)
+        #print(std_attn.shape)
+        #print(std_attn[0][0].sum())
+
+        
+        
+        if self.ent_reg is True:
+            # normalized_entropy_matrix_attached = normalized_entropy(std_attn_attached, mem_length.float(), dim=2, keepdim=False)
+            # masked_normalized_entropy_matrix_attached = mask *normalized_entropy_matrix_attached
+            # normalized_attn_entropy_sum_attached = masked_normalized_entropy_matrix_attached.sum()
+
+            # print(std_attn_attached)
+            # print(std_attn)
+            # print(self.ent_reg_lambda)          
+            # #print(normalized_entropy_matrix_attached)  
+            # print("Adding %f to loss", self.ent_reg_lambda * normalized_attn_entropy_sum_attached)
+            #loss += self.ent_reg_lambda * normalized_attn_entropy_sum_attached
+
+            #print("std attn attached:  ", std_attn_attached)
+            #print("sum[0][0]:  ", std_attn_attached[0][0].sum())
+            entropy_matrix_attached = entropy_new(std_attn_attached, dim=2, keepdim=False)
+            masked_entropy_matrix_attached = mask * entropy_matrix_attached
+            attn_entropy_sum_attached = masked_entropy_matrix_attached.sum()
+            
+
+            # print(std_attn_attached)
+            # print(std_attn)
+            # print(self.ent_reg_lambda)          
+            # #print(normalized_entropy_matrix_attached)  
+            # print("Adding %f to loss", self.ent_reg_lambda * normalized_attn_entropy_sum_attached)
+
+            # print("sum[0][0]:  ", std_attn_attached[0][0].sum())
+            # print(self.ent_reg_lambda)
+            # print(attn_entropy_sum_attached)
+            # print("original loss:  ", loss)
+            
+            #print("Updating loss by:  ", self.ent_reg_lambda * attn_entropy_sum_attached)
+
+            if(random.randint(1,100) == 50):
+                print("Updating loss by:  ", self.ent_reg_lambda * attn_entropy_sum_attached)
+                print("sample attention:  ")
+                print(std_attn[0][0])
+                print("sum:  ", std_attn[0][0].sum())
+            # print(output)
+            loss += self.ent_reg_lambda * attn_entropy_sum_attached#attn_entropy_sum_attached
+
 
         stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum, normalized_attn_entropy_sum)
         

@@ -17,7 +17,7 @@ class Statistics(object):
     * elapsed time
     """
 
-    def __init__(self, loss=0, n_words=0, n_correct=0, attn_entropy_sum=0, norm_attn_entropy_sum=0):
+    def __init__(self, loss=0, n_words=0, n_correct=0, attn_entropy_sum=0, norm_attn_entropy_sum=0, extra_loss=0, extra_n_correct=0):
         self.loss = loss
         self.n_words = n_words
         self.n_correct = n_correct
@@ -25,6 +25,8 @@ class Statistics(object):
         self.start_time = time.time()
         self.attn_entropy_sum = attn_entropy_sum
         self.norm_attn_entropy_sum = norm_attn_entropy_sum
+        self.extra_loss_sum = extra_loss
+        self.extra_n_correct_sum = extra_n_correct
 
     @staticmethod
     def all_gather_stats(stat, max_size=4096):
@@ -85,6 +87,8 @@ class Statistics(object):
         self.n_correct += stat.n_correct
         self.attn_entropy_sum += stat.attn_entropy_sum
         self.norm_attn_entropy_sum += stat.norm_attn_entropy_sum
+        self.extra_loss_sum += stat.extra_loss_sum
+        self.extra_n_correct_sum += stat.extra_n_correct_sum
 
         if update_n_src_words:
             self.n_src_words += stat.n_src_words
@@ -92,6 +96,9 @@ class Statistics(object):
     def accuracy(self):
         """ compute accuracy """
         return 100 * (self.n_correct / self.n_words)
+
+    def extra_accuracy(self):
+        return 100 * (self.extra_n_correct_sum / self.n_words)
 
     def xent(self):
         """ compute cross entropy """
@@ -111,6 +118,9 @@ class Statistics(object):
     def norm_attn_entropy(self):
         return self.norm_attn_entropy_sum / float(self.n_words)
 
+    def extra_loss(self):
+        return self.extra_loss_sum / float(self.n_words)
+
     def output(self, step, num_steps, learning_rate, start):
         """Write out statistics to stdout.
 
@@ -125,7 +135,7 @@ class Statistics(object):
             step_fmt = "%s/%5d" % (step_fmt, num_steps)
         logger.info(
             ("Step %s; acc: %6.2f; ppl: %5.2f; xent: %4.2f; " +
-             "lr: %7.5f; %3.0f/%3.0f tok/s; %6.0f sec; avg_attn_entropy: %f; norm_avg_attn_entropy: %f")
+             "lr: %7.5f; %3.0f/%3.0f tok/s; %6.0f sec; avg_attn_entropy: %f; norm_avg_attn_entropy: %f; extra_loss: %f; extra_accuracy: %f")
             % (step_fmt,
                self.accuracy(),
                self.ppl(),
@@ -135,7 +145,9 @@ class Statistics(object):
                self.n_words / (t + 1e-5),
                time.time() - start,
                self.attn_entropy(),
-               self.norm_attn_entropy()))
+               self.norm_attn_entropy(),
+               self.extra_loss(),
+               self.extra_accuracy()))
         sys.stdout.flush()
 
     def log_tensorboard(self, prefix, writer, learning_rate, step):
@@ -148,3 +160,5 @@ class Statistics(object):
         writer.add_scalar(prefix + "/lr", learning_rate, step)
         writer.add_scalar(prefix + "/avg_attn_entropy", self.attn_entropy(), step)
         writer.add_scalar(prefix + "/norm_avg_attn_entropy", self.norm_attn_entropy(), step)
+        writer.add_scalar(prefix + "/extra_loss", self.extra_loss(), step)
+        writer.add_scalar(prefix + "/extra_accuracy", self.extra_accuracy(), step)

@@ -202,6 +202,8 @@ def model_opts(parser):
     group.add('--ent_reg', '-ent_reg', action="store_true", default=False, help="Regularize entropy")
     group.add('--ent_reg_lambda', '-ent_reg_lambda', type=float, default=0.0, help="Lambda for ent reg loss")
 
+    group.add('--zom_unk_lambda', '-zom_unk_lambda', type=float, default=0.0, help="Zero Out Max UNK Loss Lambda")
+
 def preprocess_opts(parser):
     """ Pre-procesing options """
     # Data options

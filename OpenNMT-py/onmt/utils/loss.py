@@ -65,7 +65,9 @@ def build_loss_compute(model, tgt_field, opt, train=True):
             random_permute_reg_lambda=opt.permute_reg_lambda,
             uniform_reg_lambda=opt.uniform_reg_lambda,
             ent_reg=opt.ent_reg,
-            ent_reg_lambda=opt.ent_reg_lambda
+            ent_reg_lambda=opt.ent_reg_lambda,
+            zom_unk_lambda=opt.zom_unk_lambda,
+            unk_idx=unk_idx
             )
     compute.to(device)
 
@@ -183,7 +185,7 @@ class LossComputeBase(nn.Module):
             batch_stats.update(stats)
         return None, batch_stats
 
-    def _stats(self, loss, scores, target, attn_entropy_sum, norm_attn_entropy_sum):
+    def _stats(self, loss, scores, target, attn_entropy_sum, norm_attn_entropy_sum, extra_loss=None, extra_scores=None, extra_target=None):
         """
         Args:
             loss (:obj:`FloatTensor`): the loss computed by the loss criterion.
@@ -197,7 +199,13 @@ class LossComputeBase(nn.Module):
         non_padding = target.ne(self.padding_idx)
         num_correct = pred.eq(target).masked_select(non_padding).sum().item()
         num_non_padding = non_padding.sum().item()
-        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, attn_entropy_sum, norm_attn_entropy_sum)
+
+        extra_num_correct = None
+        if extra_scores is not None:
+            extra_pred = extra_scores.max(1)[1]
+            extra_num_correct = extra_pred.eq(extra_target).masked_select(non_padding).sum().item()
+
+        return onmt.utils.Statistics(loss.item(), num_non_padding, num_correct, attn_entropy_sum, norm_attn_entropy_sum, extra_loss=extra_loss.item(), extra_n_correct = extra_num_correct)
 
     def _bottle(self, _v):
         return _v.view(-1, _v.size(2))
@@ -243,7 +251,8 @@ class NMTLossCompute(LossComputeBase):
 
     def __init__(self, criterion, generator, normalization="sents",
                  lambda_coverage=0.0, lambda_reg=0.0, attn_reg=False,
-                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0, ent_reg=False, ent_reg_lambda=0):
+                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0, ent_reg=False, ent_reg_lambda=0, 
+                 zom_unk_lambda=0.0, unk_idx=None):
         super(NMTLossCompute, self).__init__(criterion, generator)
         self.lambda_coverage = lambda_coverage
         self.lambda_reg = lambda_reg
@@ -255,13 +264,15 @@ class NMTLossCompute(LossComputeBase):
 
         self.ent_reg = ent_reg
         self.ent_reg_lambda = ent_reg_lambda
+        self.zom_unk_lambda = zom_unk_lambda
+        self.unk_idx = unk_idx
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         shard_state = {
             "output": output,
             "target": batch.tgt[range_[0] + 1: range_[1], :, 0],
             "std_attn": attns.get("std", None).detach(),
-            "std_attn_attached": attns.get("std", None)
+            #"std_attn_attached": attns.get("std", None)
         }
 
         if 'hack' in attns:
@@ -300,6 +311,79 @@ class NMTLossCompute(LossComputeBase):
 
         previous_loss = loss.clone()
 
+        # print("zero out max is none:  ", zero_out_max_outputs is None)
+        # print("uniform is none:  ", uniform_outputs is None)
+        # print("random permute is none:  ", random_permute_outputs is None)
+        # print("zom unk lambda:  ", self.zom_unk_lambda)
+
+        #print(scores.max(-1)[1][0:20])
+
+        if self.zom_unk_lambda is not None:
+            # check sum difference zero out max and output
+            counter_output = self._bottle(zero_out_max_outputs)
+            counter_scores = self.generator(counter_output)
+
+            all_unk = torch.ones(gtruth.shape[0])
+            all_unk[:] = self.unk_idx
+            all_unk = all_unk.long().cuda()
+            counter_gtruth = torch.where(gtruth == torch.tensor(self.padding_idx).cuda(), gtruth, all_unk)
+
+            counter_loss = self.criterion(counter_scores, counter_gtruth)
+
+            if(random.randint(1,200) == 50):
+
+                print("===============================")
+
+                values, indices = scores.max(-1)
+                
+                print("Original output:  ")
+                print("***************")
+                print(indices[0:20])
+                print(values[0:20].exp())
+                print("**************")
+
+                print("+"*10)
+
+                values, indices = counter_scores.max(-1)
+                
+                print("Counter output:  ")
+                print("***************")
+                print(indices[0:20])
+                print(values[0:20].exp())
+                print("**************")
+
+                print("+"*10)
+
+                print("normal loss:  ", loss)
+                print("counterloss:", counter_loss)
+                print("lambda:  ", self.zom_unk_lambda)
+                print("Update by:  ", self.zom_unk_lambda * counter_loss)
+                #print("")    
+                a, b, c = std_attn.shape
+                for _ in range(2):
+                    f1 = random.randint(0,a-1)
+                    f2 = random.randint(0,b-1)
+                    print("random attention:  ", std_attn[f1][f2])
+                    print("sum:  ", std_attn[f1][f2].sum())
+                
+                #print("random attenton:   ", std_attn[3][12][3])
+                #print("random attenton:   ", std_attn[5][4][2])
+                print("===============================")
+
+            loss += self.zom_unk_lambda * counter_loss
+            # if((gtruth == self.padding_idx).any()):
+            #     print("It has padding")
+            #     print("gtruth:  ")
+            #     print(gtruth)
+            #     print("counter gtruth:  ")
+            #     print(counter_gtruth)
+
+
+            #counter_gtruth[:] = self.unk_idx
+
+            #criterion = nn.NLLLoss(reduction='none')
+            #print(self.criterion)
+
         if self.attn_reg is not False:
             scores_unbottled = scores.view(output.shape[0], output.shape[1], -1)
             _, classes_for_reg = scores_unbottled.max(dim=2)
@@ -326,21 +410,7 @@ class NMTLossCompute(LossComputeBase):
 
                 additional_loss = (target_mask * additional_loss_unbottled).sum()
 
-                # if random.randint(1, 50) == 5:
-                #     print("normal loss:  %f" % loss)
-                #     print("additional loss:  %f" % additional_loss)
-                #     print("new loss:  %f" % (loss - self.lambda_reg * additional_loss))
-                
-                #loss -= self.lambda_reg * additional_loss # Todo: multiple regularization methods
-		
-                #print("additional loss:  ", additional_loss)
-            
-                # print("============")
-                # print("loss for %s is :  %f" % (name, additional_loss))
-                # print("Total loss will be updated by %f" % (-reg_lambda * additional_loss))
-                # print("=============")
-                
-                print(">>>>>>>> shit <<<<<<<")
+                print("fuck!")
                 loss -= reg_lambda * additional_loss
 
             #print("done")
@@ -357,9 +427,6 @@ class NMTLossCompute(LossComputeBase):
 
         entropy_matrix = entropy(std_attn, dim=2, keepdim=False)
 
-        # print("entropy matrix shape:  ")
-        # print(entropy_matrix.shape)
-
         normalized_entropy_matrix = normalized_entropy(std_attn, mem_length.float(), dim=2, keepdim=False)
 
         mask = target.ne(self.padding_idx).float()
@@ -370,54 +437,18 @@ class NMTLossCompute(LossComputeBase):
         attn_entropy_sum = masked_entropy_matrix.sum()
         normalized_attn_entropy_sum = masked_normalized_entropy_matrix.sum()
 
-        #print(">>>> ent reg;  ", self.ent_reg)
-        #print(std_attn.shape)
-        #print(std_attn[0][0].sum())
-
-        
         
         if self.ent_reg is True:
-            # normalized_entropy_matrix_attached = normalized_entropy(std_attn_attached, mem_length.float(), dim=2, keepdim=False)
-            # masked_normalized_entropy_matrix_attached = mask *normalized_entropy_matrix_attached
-            # normalized_attn_entropy_sum_attached = masked_normalized_entropy_matrix_attached.sum()
 
-            # print(std_attn_attached)
-            # print(std_attn)
-            # print(self.ent_reg_lambda)          
-            # #print(normalized_entropy_matrix_attached)  
-            # print("Adding %f to loss", self.ent_reg_lambda * normalized_attn_entropy_sum_attached)
-            #loss += self.ent_reg_lambda * normalized_attn_entropy_sum_attached
-
-            #print("std attn attached:  ", std_attn_attached)
-            #print("sum[0][0]:  ", std_attn_attached[0][0].sum())
             entropy_matrix_attached = entropy_new(std_attn_attached, dim=2, keepdim=False)
             masked_entropy_matrix_attached = mask * entropy_matrix_attached
             attn_entropy_sum_attached = masked_entropy_matrix_attached.sum()
-            
 
-            # print(std_attn_attached)
-            # print(std_attn)
-            # print(self.ent_reg_lambda)          
-            # #print(normalized_entropy_matrix_attached)  
-            # print("Adding %f to loss", self.ent_reg_lambda * normalized_attn_entropy_sum_attached)
-
-            # print("sum[0][0]:  ", std_attn_attached[0][0].sum())
-            # print(self.ent_reg_lambda)
-            # print(attn_entropy_sum_attached)
-            # print("original loss:  ", loss)
-            
-            #print("Updating loss by:  ", self.ent_reg_lambda * attn_entropy_sum_attached)
-
-            if(random.randint(1,100) == 50):
-                print("Updating loss by:  ", self.ent_reg_lambda * attn_entropy_sum_attached)
-                print("sample attention:  ")
-                print(std_attn[0][0])
-                print("sum:  ", std_attn[0][0].sum())
-            # print(output)
+            print(">>> fuck 2 <<<<")            
             loss += self.ent_reg_lambda * attn_entropy_sum_attached#attn_entropy_sum_attached
 
 
-        stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum, normalized_attn_entropy_sum)
+        stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum, normalized_attn_entropy_sum, extra_loss=counter_loss.clone(), extra_scores=counter_scores, extra_target=counter_gtruth)
         
         return loss, stats
 

@@ -312,7 +312,8 @@ class StdRNNDecoder(RNNDecoderBase):
             )
             attns["std"] = p_attn
 
-            if self.attn_reg is True:
+            #if self.attn_reg is True:
+            if self.attn_reg_methods is not None and self.attn_reg_methods != "":
                 attns['hack'] = {}
                 
                 for attn_reg_method in self.attn_reg_methods:
@@ -324,6 +325,7 @@ class StdRNNDecoder(RNNDecoderBase):
                     )
 
                     attns['hack'][attn_reg_method] = {'dec_outs': self.dropout(new_dec_outs)}
+            
 
 
         # Calculate the context gate.

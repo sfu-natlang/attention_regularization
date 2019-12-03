@@ -29,6 +29,8 @@ def build_translator(opt, report_score=True, logger=None, out_file=None):
 
     scorer = onmt.translate.GNMTGlobalScorer.from_opt(opt)
 
+    print("model:  ", model)
+    print("model opt:  ", model_opt)
     translator = Translator.from_opt(
         model,
         fields,

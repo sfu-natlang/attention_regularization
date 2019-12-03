@@ -178,7 +178,7 @@ class GlobalAttention(nn.Module):
         # dimension: batch x target len x source len
         align = self.score(source, memory_bank)
 
-        if modification_method is not None:
+        if modification_method is not None and modification_method != "":
             #align = align.detach() # Is this OK?
 
             top_indices = torch.argsort(align, descending=True)

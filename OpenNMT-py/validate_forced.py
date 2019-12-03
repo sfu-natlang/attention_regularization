@@ -24,6 +24,8 @@ def validate(opt, device_id=0):
         logger.info('Loading checkpoint from %s' % opt.train_from)
         checkpoint = torch.load(opt.train_from,
                                 map_location=lambda storage, loc: storage)
+        print(">>>> shit <<<<")
+        print("checkpoint:  ", opt.train_from)
         model_opt = ArgumentParser.ckpt_model_opts(checkpoint["opt"])
         ArgumentParser.update_model_opts(model_opt)
         ArgumentParser.validate_model_opts(model_opt)
@@ -74,6 +76,7 @@ def validate(opt, device_id=0):
 
             # F-prop through the model.
             outputs, attns = model(src, tgt, src_lengths)
+
 
             # Compute loss.
             _, batch_stats = valid_loss(batch, outputs, attns)

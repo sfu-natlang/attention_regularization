@@ -11,7 +11,7 @@ import random
 import onmt
 from onmt.modules.sparse_losses import SparsemaxLoss
 from onmt.modules.sparse_activations import LogSparsemax
-from onmt.utils.misc import entropy, normalized_entropy
+from onmt.utils.misc import entropy, normalized_entropy, entropy_new
 
 
 def build_loss_compute(model, tgt_field, opt, train=True):
@@ -62,7 +62,8 @@ def build_loss_compute(model, tgt_field, opt, train=True):
             criterion, loss_gen, lambda_coverage=opt.lambda_coverage, lambda_reg=opt.lambda_reg, attn_reg=opt.attn_reg,
             zero_out_max_reg_lambda=opt.zero_out_max_reg_lambda,
             random_permute_reg_lambda=opt.permute_reg_lambda,
-            uniform_reg_lambda=opt.uniform_reg_lambda
+            uniform_reg_lambda=opt.uniform_reg_lambda,
+            ent_reg_lambda=opt.ent_reg_lambda
             )
     compute.to(device)
 
@@ -233,7 +234,7 @@ class NMTLossCompute(LossComputeBase):
 
     def __init__(self, criterion, generator, normalization="sents",
                  lambda_coverage=0.0, lambda_reg=0.0, attn_reg=False,
-                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0):
+                 uniform_reg_lambda=0.0, zero_out_max_reg_lambda=0.0, random_permute_reg_lambda=0.0, ent_reg_lambda=0.0):
         super(NMTLossCompute, self).__init__(criterion, generator)
         self.lambda_coverage = lambda_coverage
         self.lambda_reg = lambda_reg
@@ -242,6 +243,7 @@ class NMTLossCompute(LossComputeBase):
         self.uniform_reg_lambda = uniform_reg_lambda
         self.zero_out_max_reg_lambda = zero_out_max_reg_lambda
         self.random_permute_reg_lambda = random_permute_reg_lambda
+        self.ent_reg_lambda = ent_reg_lambda
 
     def _make_shard_state(self, batch, output, range_, attns=None):
         shard_state = {
@@ -249,6 +251,10 @@ class NMTLossCompute(LossComputeBase):
             "target": batch.tgt[range_[0] + 1: range_[1], :, 0],
             "std_attn": attns.get("std", None).detach(),
         }
+
+        if self.ent_reg_lambda != 0 and self.ent_reg_lambda is not None:
+            shard_state['std_attn_attached'] = attns.get("std", None)
+
 
         if 'hack' in attns:
             for k in attns['hack'].keys():
@@ -271,7 +277,7 @@ class NMTLossCompute(LossComputeBase):
 
     def _compute_loss(self, batch, output, target, std_attn=None,
                       coverage_attn=None, second_max_outputs=None,
-                      zero_out_max_outputs=None, uniform_outputs=None, random_permute_outputs=None):
+                      zero_out_max_outputs=None, uniform_outputs=None, random_permute_outputs=None, std_attn_attached=None):
 
         bottled_output = self._bottle(output)
 
@@ -361,6 +367,17 @@ class NMTLossCompute(LossComputeBase):
 
         attn_entropy_sum = masked_entropy_matrix.sum()
         normalized_attn_entropy_sum = masked_normalized_entropy_matrix.sum()
+
+        if self.ent_reg_lambda != 0 and self.ent_reg_lambda is not None:
+            entropy_matrix_attached = entropy_new(std_attn_attached, dim=2, keepdim=False)
+            masked_entropy_matrix_attached = mask * entropy_matrix_attached
+            attn_entropy_sum_attached = masked_entropy_matrix_attached.sum()
+            if(random.randint(1,100) == 50):
+                print("Entropy regularization loss:  ", attn_entropy_sum_attached)
+                print("Entropy reg lambda:  ", self.ent_reg_lambda)
+
+            loss += self.ent_reg_lambda * attn_entropy_sum_attached
+
 
         stats = self._stats(loss.clone(), scores, gtruth, attn_entropy_sum, normalized_attn_entropy_sum)
         

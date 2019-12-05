@@ -179,7 +179,7 @@ class GlobalAttention(nn.Module):
         align = self.score(source, memory_bank)
 
         if modification_method is not None:
-            #align = align.detach() # Is this OK?
+            align = align.detach() # Is this OK?
 
             top_indices = torch.argsort(align, descending=True)
             memory_lengths_vector = memory_lengths.cpu()

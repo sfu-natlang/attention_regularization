@@ -310,6 +310,8 @@ class NMTLossCompute(LossComputeBase):
 
                 target_mask = target.ne(self.padding_idx).float()
 
+                additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 2.5)
+                
                 additional_loss = (target_mask * additional_loss_unbottled).sum()
 
                 # if random.randint(1, 50) == 5:
@@ -325,12 +327,17 @@ class NMTLossCompute(LossComputeBase):
                 # print("loss for %s is :  %f" % (name, additional_loss))
                 # print("Total loss will be updated by %f" % (-reg_lambda * additional_loss))
                 # print("=============")
+
                 
+                if(random.randint(1,100) == 50):
+                    print("lambda:  ", reg_lambda)
+                    print("Additional loss for %s is: %f" % (name, additional_loss))
+                    
                 loss -= reg_lambda * additional_loss
 
             #print("done")
             if(random.randint(1,100) == 50):
-                print("previous loss:  ", previous_loss.item())
+                print("original loss:  ", previous_loss.item())
                 print("new loss:  ", loss.item())
 	
         if self.lambda_coverage != 0.0:

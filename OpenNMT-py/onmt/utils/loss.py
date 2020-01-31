@@ -170,7 +170,8 @@ class LossComputeBase(nn.Module):
         batch_stats = onmt.utils.Statistics()
         for shard in shards(shard_state, shard_size):
             loss, stats = self._compute_loss(batch, **shard)
-            loss.div(float(normalization)).backward()
+            with torch.autograd.detect_anomaly():
+                loss.div(float(normalization)).backward()
             batch_stats.update(stats)
         return None, batch_stats
 
@@ -308,17 +309,54 @@ class NMTLossCompute(LossComputeBase):
                 extra_bottled_output = self._bottle(extra_output)
                 extra_scores = self.generator(extra_bottled_output)
 
+                original_probs = torch.exp(extra_scores)
+                original_probs = 1 - original_probs # DO NOT FORGET
+                original_probs += 0.000001
+
+                #modified_extra_scores = 1/(original_probs-1.05)+1/(original_probs+0.05)-19
+                modified_extra_scores = torch.log(original_probs)
+
+                # extra_scores_new = extra_scores.clone()
+                # extra_scores_new[torch.isnan(extra_scores)] = -1e9
+
                 criterion = nn.NLLLoss(reduction='none')
 
-                additional_loss = criterion(extra_scores, classes_for_reg_bottled)
+                #additional_loss = criterion(modified_extra_scores, classes_for_reg_bottled)
+                additional_loss = criterion(modified_extra_scores, gtruth) # BIG CHANGE
+
+                #extra_scores_new = extra_scores.close()
+                #extra_scores_new[extra_scores==0] += 0.0000001
+                #extra_scores += 0.0000001
+
 
                 additional_loss_unbottled = additional_loss.view(target.shape)
 
+                
+
                 target_mask = target.ne(self.padding_idx).float()
 
-                additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 2.5)
+                #additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 2.5)
+                #print("additional loss unbottled:  ")
+                #print(additional_loss_unbottled)
                 
+                #additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 0.08)
+                
+                #additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 2.5)
+
                 additional_loss = (target_mask * additional_loss_unbottled).sum()
+
+                # if torch.isnan(previous_loss).item() is True:
+                #     print("original loss is nan!")
+                #     print(scores_unbottled)
+                #     print("output:  ")
+                #     print(bottled_output)
+
+                # if torch.isnan(additional_loss).item() is True:
+                #     print("Fuck! Additional loss is nan")
+                #     print("additional loss unbottled:  ")
+                #     print(additional_loss_unbottled)
+                #     print("extra scores:  ")
+                #     print(extra_scores)
 
                 # if random.randint(1, 50) == 5:
                 #     print("normal loss:  %f" % loss)
@@ -339,7 +377,7 @@ class NMTLossCompute(LossComputeBase):
                     print("lambda:  ", reg_lambda)
                     print("Additional loss for %s is: %f" % (name, additional_loss))
                     
-                loss -= reg_lambda * additional_loss
+                loss += reg_lambda * additional_loss
 
             #print("done")
             if(random.randint(1,100) == 50):
@@ -369,6 +407,7 @@ class NMTLossCompute(LossComputeBase):
         normalized_attn_entropy_sum = masked_normalized_entropy_matrix.sum()
 
         if self.ent_reg_lambda != 0 and self.ent_reg_lambda is not None:
+            
             entropy_matrix_attached = entropy_new(std_attn_attached, dim=2, keepdim=False)
             masked_entropy_matrix_attached = mask * entropy_matrix_attached
             attn_entropy_sum_attached = masked_entropy_matrix_attached.sum()

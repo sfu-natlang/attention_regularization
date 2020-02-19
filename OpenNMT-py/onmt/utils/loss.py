@@ -306,23 +306,31 @@ class NMTLossCompute(LossComputeBase):
                 if reg_lambda == 0:
                     continue
 
+                #print("name:  ", name)
                 extra_bottled_output = self._bottle(extra_output)
                 extra_scores = self.generator(extra_bottled_output)
 
-                original_probs = torch.exp(extra_scores)
-                original_probs = 1 - original_probs # DO NOT FORGET
-                original_probs += 0.000001
 
-                #modified_extra_scores = 1/(original_probs-1.05)+1/(original_probs+0.05)-19
-                modified_extra_scores = torch.log(original_probs)
+                # probs1 = torch.exp(scores)
+                # probs2 = torch.exp(extra_scores)
+                # modified_extra_scores = torch.log(torch.clamp((probs1 - probs2), min=0.1))
+
+                modified_extra_scores = extra_scores
+
+                # original_probs = torch.exp(extra_scores)
+                # original_probs = 1 - original_probs # DO NOT FORGET
+                # original_probs += 0.000001
+
+                # #modified_extra_scores = 1/(original_probs-1.05)+1/(original_probs+0.05)-19
+                #modified_extra_scores = torch.log(original_probs)
 
                 # extra_scores_new = extra_scores.clone()
                 # extra_scores_new[torch.isnan(extra_scores)] = -1e9
 
                 criterion = nn.NLLLoss(reduction='none')
 
-                #additional_loss = criterion(modified_extra_scores, classes_for_reg_bottled)
-                additional_loss = criterion(modified_extra_scores, gtruth) # BIG CHANGE
+                additional_loss = criterion(modified_extra_scores, classes_for_reg_bottled)
+                #additional_loss = criterion(modified_extra_scores, gtruth) # BIG CHANGE
 
                 #extra_scores_new = extra_scores.close()
                 #extra_scores_new[extra_scores==0] += 0.0000001
@@ -335,7 +343,7 @@ class NMTLossCompute(LossComputeBase):
 
                 target_mask = target.ne(self.padding_idx).float()
 
-                #additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 2.5)
+                additional_loss_unbottled = torch.clamp(additional_loss_unbottled, 0, 2.5)
                 #print("additional loss unbottled:  ")
                 #print(additional_loss_unbottled)
                 
@@ -376,8 +384,9 @@ class NMTLossCompute(LossComputeBase):
                 if(random.randint(1,100) == 50):
                     print("lambda:  ", reg_lambda)
                     print("Additional loss for %s is: %f" % (name, additional_loss))
-                    
-                loss += reg_lambda * additional_loss
+
+                loss -= reg_lambda * additional_loss    
+                #loss += reg_lambda * additional_loss
 
             #print("done")
             if(random.randint(1,100) == 50):
